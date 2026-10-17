@@ -1,2 +1,39 @@
 [tools]
 rust = "1.99.1"
+
+[tasks.default]
+description = "Lint, test and build lazytop"
+alias = "all"
+depends = ["lint", "test", "build"]
+
+[tasks.build]
+description = "Build the release binary"
+sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+outputs = ["target/release/lazytop"]
+run = "cargo build --release"
+
+[tasks.run]
+description = "Build and run lazytop"
+raw = true
+run = "cargo run --release --"
+
+[tasks.demo]
+description = "Run lazytop in demo mode"
+raw = true
+run = "cargo run --release -- --demo"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test"
+
+[tasks.lint]
+description = "rustfmt check and clippy"
+run = ["cargo fmt --check", "cargo clippy --all-targets -- -D warnings"]
+
+[tasks.install]
+description = "Install lazytop to ~/.cargo/bin"
+run = "cargo install --path ."
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = "cargo clean"

@@ -1,0 +1,33 @@
+[package]
+name = "lazytop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "A lazy-style terminal system monitor for macOS (Apple Silicon) and Linux"
+license = "MIT"
+repository = "https://github.com/celson/lazytop"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+sysinfo = "0.39"
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "1.1"
+anyhow = "1"
+dirs = "7"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nvml-wrapper = "0.13"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
