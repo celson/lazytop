@@ -1,5 +1,6 @@
 pub mod fmt;
 pub mod panels;
+pub mod process;
 pub mod theme;
 pub mod widgets;
 

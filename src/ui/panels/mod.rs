@@ -5,6 +5,7 @@ pub mod header;
 pub mod help;
 pub mod memory;
 pub mod netdisk;
+pub mod processes;
 pub mod sensors;
 
 use std::collections::HashSet;
