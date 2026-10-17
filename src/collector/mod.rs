@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod common;
 pub mod demo;
+pub mod linux;
 pub mod macos;
 pub mod rate;
 
@@ -50,6 +51,25 @@ pub trait Platform: Send {
     /// Receives sysinfo per-core usage before `sample` (default: ignored).
     fn set_per_core(&mut self, _per_core: &[f64]) {}
     fn sample(&mut self) -> PlatformData;
+}
+
+#[allow(dead_code)]
+struct NoPlatform;
+impl Platform for NoPlatform {
+    fn sample(&mut self) -> PlatformData {
+        PlatformData::default()
+    }
+}
+
+/// Real collector for the current OS.
+pub fn system_collector() -> Box<dyn Collector> {
+    #[cfg(target_os = "linux")]
+    let platform: Box<dyn Platform> = Box::new(linux::platform::LinuxPlatform::new("/".into()));
+    #[cfg(target_os = "macos")]
+    let platform: Box<dyn Platform> = Box::new(macos::MacPlatform::new());
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let platform: Box<dyn Platform> = Box::new(NoPlatform);
+    Box::new(common::SystemCollector::new(platform))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
