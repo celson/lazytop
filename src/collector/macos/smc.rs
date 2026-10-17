@@ -65,7 +65,8 @@ fn fourcc_str(v: u32) -> String {
 
 pub struct Smc {
     conn: IoObject,
-    temp_keys: Vec<(String, SensorKind)>,
+    /// Discovered temperature keys with their cached key info (saves one IOKit call per read).
+    temp_keys: Vec<(String, u32, KeyInfo, SensorKind)>,
     fan_count: u8,
 }
 
@@ -136,8 +137,22 @@ impl Smc {
 
     fn read_f32(&self, key: &str) -> Option<f32> {
         let (info, b) = self.read(key)?;
+        Self::decode_f32(&info, &b)
+    }
+
+    fn decode_f32(info: &KeyInfo, b: &[u8; 32]) -> Option<f32> {
         (info.data_type == fourcc("flt ") && info.data_size == 4)
             .then(|| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    fn read_f32_cached(&self, key: u32, info: KeyInfo) -> Option<f32> {
+        let out = self.call(&KeyData {
+            key,
+            key_info: info,
+            data8: CMD_READ_BYTES,
+            ..Default::default()
+        })?;
+        Self::decode_f32(&info, &out.bytes)
     }
 
     fn discover(&mut self) {
@@ -154,13 +169,18 @@ impl Smc {
                 continue;
             };
             let name = fourcc_str(out.key);
-            let Some(kind) = calc::classify_smc_key(&name) else {
+            // "Other" (skin, board, ...) has >100 keys on Apple Silicon and isn't shown; skip it.
+            let Some(kind) = calc::classify_smc_key(&name).filter(|k| *k != SensorKind::Other)
+            else {
                 continue;
             };
-            if let Some(v) = self.read_f32(&name)
+            let Some(info) = self.key_info(out.key) else {
+                continue;
+            };
+            if let Some(v) = self.read_f32_cached(out.key, info)
                 && (5.0..=130.0).contains(&v)
             {
-                self.temp_keys.push((name, kind));
+                self.temp_keys.push((name, out.key, info, kind));
             }
         }
         self.fan_count = self.read("FNum").map(|(_, b)| b[0]).unwrap_or(0);
@@ -168,14 +188,14 @@ impl Smc {
 
     pub fn temperatures(&mut self) -> Vec<SensorGroup> {
         let mut groups: BTreeMap<SensorKind, Vec<(String, f64)>> = BTreeMap::new();
-        for (key, kind) in &self.temp_keys {
-            if let Some(v) = self.read_f32(key)
+        for (name, key, info, kind) in &self.temp_keys {
+            if let Some(v) = self.read_f32_cached(*key, *info)
                 && (5.0..=130.0).contains(&v)
             {
                 groups
                     .entry(*kind)
                     .or_default()
-                    .push((key.clone(), v as f64));
+                    .push((name.clone(), v as f64));
             }
         }
         groups

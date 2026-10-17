@@ -19,6 +19,8 @@ mod platform {
     use crate::collector::{Platform, PlatformData};
     use crate::model::GpuStats;
 
+    const SMC_EVERY: u64 = 3;
+
     pub struct MacPlatform {
         chip: Option<String>,
         cores_e: Option<usize>,
@@ -27,6 +29,9 @@ mod platform {
         total: u64,
         ioreport: Option<IoReport>,
         smc: Option<Smc>,
+        /// Last temperatures/fans; SMC is read every `SMC_EVERY` samples (~16 ms per read).
+        sensors: (Vec<crate::model::SensorGroup>, Vec<crate::model::Fan>),
+        ticks: u64,
     }
 
     impl MacPlatform {
@@ -49,6 +54,8 @@ mod platform {
                 total: sys::sysctl_u64("hw.memsize").unwrap_or(0),
                 ioreport,
                 smc,
+                sensors: (Vec::new(), Vec::new()),
+                ticks: 0,
             }
         }
     }
@@ -103,12 +110,16 @@ mod platform {
                 }
             }
             if let Some(smc) = &mut self.smc {
-                pd.sensors = smc.temperatures();
-                pd.fans = smc.fans();
+                if self.ticks.is_multiple_of(SMC_EVERY) {
+                    self.sensors = (smc.temperatures(), smc.fans());
+                }
+                pd.sensors = self.sensors.0.clone();
+                pd.fans = self.sensors.1.clone();
                 if let Some(w) = smc.system_power() {
                     pd.power.get_or_insert_with(Default::default).system_w = Some(w);
                 }
             }
+            self.ticks += 1;
             pd
         }
     }

@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use sysinfo::{Disks, Networks, ProcessesToUpdate, System, Users};
+use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
 
 use super::rate::Counter;
 use super::{Collector, Platform, PlatformData, ai};
 use crate::model::*;
+
+/// Refresh mounted-disk capacity every N samples.
+const DISK_REFRESH_TICKS: u64 = 30;
 
 pub fn merge(mut s: Snapshot, pd: PlatformData) -> Snapshot {
     if let Some(chip) = pd.chip {
@@ -49,6 +52,7 @@ pub struct Common {
     disks: Disks,
     users: Users,
     net_counters: HashMap<String, (Counter, Counter)>,
+    ticks: u64,
 }
 
 impl Common {
@@ -61,6 +65,7 @@ impl Common {
             disks: Disks::new_with_refreshed_list(),
             users: Users::new_with_refreshed_list(),
             net_counters: HashMap::new(),
+            ticks: 0,
         }
     }
 
@@ -68,9 +73,22 @@ impl Common {
         let now = Instant::now();
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();
-        self.sys.refresh_processes(ProcessesToUpdate::All, true);
+        // Only what the UI shows; cmd/user are read once per process.
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cpu()
+                .with_memory()
+                .with_user(UpdateKind::OnlyIfNotSet)
+                .with_cmd(UpdateKind::OnlyIfNotSet),
+        );
         self.nets.refresh(true);
-        self.disks.refresh(true);
+        // Disk capacity barely changes and statfs over every mount costs ~20 ms; refresh rarely.
+        if self.ticks.is_multiple_of(DISK_REFRESH_TICKS) {
+            self.disks.refresh(true);
+        }
+        self.ticks += 1;
 
         let per_core: Vec<f64> = self
             .sys

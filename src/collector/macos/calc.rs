@@ -1,6 +1,6 @@
 //! Pure math behind the macOS backend; no FFI here so it is tested on every OS.
 use crate::collector::MemDetail;
-use crate::model::SensorKind;
+use crate::model::{Bandwidth, SensorKind};
 
 pub const IDLE_STATES: [&str; 3] = ["IDLE", "OFF", "DOWN"];
 
@@ -148,6 +148,27 @@ pub fn histogram_mean_gbps(states: &[(String, i64)]) -> Option<f64> {
     (total > 0).then(|| weighted / total as f64)
 }
 
+/// Per-agent DCS bandwidth (bytes/s) → buckets. Total is the sum of agents (same convention as
+/// SiliconScope); the aggregate `"RD+WR"` channel is ignored.
+pub fn bandwidth_from_agents(agents: &[(String, f64)]) -> Bandwidth {
+    let mut bw = Bandwidth::default();
+    for (name, bps) in agents {
+        if name == "RD+WR" {
+            continue;
+        }
+        let slot = match bandwidth_bucket(name) {
+            Bucket::Cpu => &mut bw.cpu,
+            Bucket::Gpu => &mut bw.gpu,
+            Bucket::Media => &mut bw.media,
+            Bucket::Ane => &mut bw.ane,
+            Bucket::Other => &mut bw.other,
+        };
+        *slot += bps;
+    }
+    bw.total = bw.cpu + bw.gpu + bw.media + bw.ane + bw.other;
+    bw
+}
+
 pub fn bandwidth_bucket(channel: &str) -> Bucket {
     let c = channel.to_uppercase();
     if c.contains("CPU") || c.starts_with("EACC") || c.starts_with("PACC") {
@@ -273,6 +294,24 @@ mod tests {
         assert_eq!(histogram_mean_gbps(&st(&[("   2GB/s", 0)])), None);
         assert_eq!(histogram_mean_gbps(&st(&[("garbage", 5)])), None);
         assert_eq!(histogram_mean_gbps(&st(&[(" 500MB/s", 1)])), Some(0.5));
+    }
+
+    #[test]
+    fn bandwidth_total_is_sum_of_agents() {
+        let agents = vec![
+            ("EACC0 RD+WR".to_string(), 2e9),
+            ("PACC0 RD+WR".to_string(), 2e9),
+            ("AGX RD+WR".to_string(), 6e9),
+            ("ANE0 RD+WR".to_string(), 1e9),
+            ("DISP RD+WR".to_string(), 2e9),
+            ("RD+WR".to_string(), 4e9), // aggregate channel is ignored
+        ];
+        let b = bandwidth_from_agents(&agents);
+        assert_eq!(
+            (b.cpu, b.gpu, b.ane, b.media, b.other),
+            (4e9, 6e9, 1e9, 0.0, 2e9)
+        );
+        assert_eq!(b.total, 13e9);
     }
 
     #[test]

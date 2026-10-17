@@ -9,7 +9,7 @@ use core_foundation::dictionary::{
 };
 use core_foundation::string::CFStringRef;
 
-use super::calc::{self, Bucket};
+use super::calc;
 use super::cf::{self, Owned};
 use super::iokit::{self, DvfsTables};
 use crate::model::{Bandwidth, ClusterKind, CpuCluster, PowerStats};
@@ -53,12 +53,11 @@ unsafe extern "C" {
     fn IOReportStateGetResidency(ch: CFDictionaryRef, i: i32) -> i64;
 }
 
-const GROUPS: [(&str, Option<&str>); 5] = [
+const GROUPS: [(&str, Option<&str>); 4] = [
     ("Energy Model", None),
     ("CPU Stats", Some("CPU Core Performance States")),
     ("GPU Stats", Some("GPU Performance States")),
-    ("AMC Stats", None),
-    ("PMP", None),
+    ("PMP", Some("DCS BW")),
 ];
 
 #[derive(Debug, Default, Clone)]
@@ -162,8 +161,7 @@ impl IoReport {
         let mut out = IoSample::default();
         let mut e_states: Vec<Vec<(String, i64)>> = Vec::new();
         let mut p_states: Vec<Vec<(String, i64)>> = Vec::new();
-        let mut bw = Bandwidth::default();
-        let mut bw_any = false;
+        let mut agents: Vec<(String, f64)> = Vec::new();
         let Some(arr) = cf::dict_get(delta, "IOReportChannels") else {
             return out;
         };
@@ -223,21 +221,8 @@ impl IoReport {
                 }
                 // DCS BW channels are residency histograms over bandwidth bins ("  12GB/s").
                 "PMP" if sub == "DCS BW" && name.ends_with("RD+WR") => {
-                    let Some(gbps) = calc::histogram_mean_gbps(&states()) else {
-                        continue;
-                    };
-                    let bps = gbps * 1e9;
-                    bw_any = true;
-                    if name == "RD+WR" {
-                        bw.total = bps;
-                        continue;
-                    }
-                    match calc::bandwidth_bucket(&name) {
-                        Bucket::Cpu => bw.cpu += bps,
-                        Bucket::Gpu => bw.gpu += bps,
-                        Bucket::Media => bw.media += bps,
-                        Bucket::Ane => bw.ane += bps,
-                        Bucket::Other => bw.other += bps,
+                    if let Some(gbps) = calc::histogram_mean_gbps(&states()) {
+                        agents.push((name, gbps * 1e9));
                     }
                 }
                 _ => {}
@@ -271,15 +256,6 @@ impl IoReport {
         if out.power.dram_w == Some(0.0) {
             out.power.dram_w = None;
         }
-        if bw_any {
-            // the total histogram is authoritative; agents not listed above make up "other"
-            let known = bw.cpu + bw.gpu + bw.media + bw.ane;
-            if bw.total <= 0.0 {
-                bw.total = known + bw.other;
-            } else {
-                bw.other = (bw.total - known).max(0.0);
-            }
-        }
         let sys: f64 = [
             out.power.cpu_w,
             out.power.gpu_w,
@@ -290,7 +266,7 @@ impl IoReport {
         .flatten()
         .sum();
         out.power.system_w = (sys > 0.0).then_some(sys);
-        out.bandwidth = bw_any.then_some(bw);
+        out.bandwidth = (!agents.is_empty()).then(|| calc::bandwidth_from_agents(&agents));
         out
     }
 
