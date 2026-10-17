@@ -17,11 +17,11 @@ fn kv(label: &str, value: String, swatch: Option<Color>, width: u16, t: &Theme) 
     if let Some(c) = swatch {
         spans.push(Span::styled("■ ", Style::default().fg(c)));
     }
-    let lw = label.chars().count() + if swatch.is_some() { 2 } else { 0 };
+    let lw = fmt::width(label) + if swatch.is_some() { 2 } else { 0 };
     spans.push(Span::styled(label.to_string(), Style::default().fg(t.dim)));
-    spans.push(Span::raw(" ".repeat(
-        (width as usize).saturating_sub(lw + value.chars().count()),
-    )));
+    spans.push(Span::raw(
+        " ".repeat((width as usize).saturating_sub(lw + fmt::width(&value))),
+    ));
     spans.push(Span::styled(value, Style::default().fg(t.fg)));
     Line::from(spans)
 }

@@ -21,8 +21,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
       - name: Resolve version
         id: version
         run: |
@@ -56,8 +56,8 @@ jobs:
           - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, asset: linux-arm64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
       - run: rustup target add ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Smoke test
@@ -72,7 +72,7 @@ jobs:
           mkdir "$name"
           cp target/${{ matrix.target }}/release/lazytop README.md LICENSE "$name"/
           tar czf "$name.tar.gz" "$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: lazytop-*.tar.gz
@@ -86,11 +86,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
       - run: sha256sum lazytop-*.tar.gz > checksums.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             lazytop-*.tar.gz

@@ -13,7 +13,7 @@ use crate::ui::{
 };
 
 fn kv(label: &str, value: String, color: Color, width: u16, t: &Theme) -> Line<'static> {
-    let pad = (width as usize).saturating_sub(label.chars().count() + value.chars().count());
+    let pad = fmt::pad(label, &value, width as usize);
     Line::from(vec![
         Span::styled(label.to_string(), Style::default().fg(t.dim)),
         Span::raw(" ".repeat(pad)),

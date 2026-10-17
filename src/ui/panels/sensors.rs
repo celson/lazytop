@@ -21,7 +21,7 @@ pub fn render(f: &mut Frame, area: Rect, c: &Ctx, v: &SensorView) {
     let w = inner.width as usize;
 
     let fans = if s.fans.is_empty() {
-        "Fans 0 / 0 rpm".to_string()
+        format!("Fans {}", fmt::dash())
     } else {
         let rpms: Vec<String> = s.fans.iter().map(|f| format!("{:.0}", f.rpm)).collect();
         format!("Fans {} rpm", rpms.join(" / "))
@@ -50,7 +50,7 @@ pub fn render(f: &mut Frame, area: Rect, c: &Ctx, v: &SensorView) {
             g.kind.label(),
             g.readings.len()
         );
-        let pad = w.saturating_sub(left.chars().count() + right.chars().count());
+        let pad = fmt::pad(&left, &right, w);
         let base = if selected {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
@@ -71,7 +71,7 @@ pub fn render(f: &mut Frame, area: Rect, c: &Ctx, v: &SensorView) {
             for (label, val) in &g.readings {
                 let l = format!("    {}", fmt::truncate(label, w.saturating_sub(12)));
                 let r = fmt::temp(*val);
-                let pad = w.saturating_sub(l.chars().count() + r.chars().count());
+                let pad = fmt::pad(&l, &r, w);
                 lines.push(Line::from(vec![
                     Span::styled(l, Style::default().fg(t.dim)),
                     Span::raw(" ".repeat(pad)),
@@ -124,5 +124,73 @@ mod tests {
         v.expanded.insert(SensorKind::Cpu);
         let out = draw(70, 14, |f| render(f, f.area(), &ctx, &v));
         assert!(out.contains("Tp01"));
+    }
+
+    #[test]
+    fn fanless_machine_does_not_invent_fans() {
+        let (mut s, h) = fixture::demo();
+        s.fans.clear();
+        let t = Theme::dark();
+        let ctx = Ctx {
+            snap: &s,
+            hist: &h,
+            theme: &t,
+            focused: false,
+            zoomed: false,
+            idx: 7,
+        };
+        let out = draw(70, 12, |f| {
+            render(f, f.area(), &ctx, &SensorView::default())
+        });
+        assert!(out.contains("Fans —"), "{out}");
+        assert!(!out.contains("0 / 0 rpm"));
+    }
+
+    #[test]
+    fn stopped_fans_still_listed() {
+        let (mut s, h) = fixture::demo();
+        s.fans = vec![
+            crate::model::Fan {
+                label: "Fan 0".into(),
+                rpm: 0.0,
+            },
+            crate::model::Fan {
+                label: "Fan 1".into(),
+                rpm: 0.0,
+            },
+        ];
+        let t = Theme::dark();
+        let ctx = Ctx {
+            snap: &s,
+            hist: &h,
+            theme: &t,
+            focused: false,
+            zoomed: false,
+            idx: 7,
+        };
+        let out = draw(70, 12, |f| {
+            render(f, f.area(), &ctx, &SensorView::default())
+        });
+        assert!(out.contains("Fans 0 / 0 rpm"), "{out}");
+    }
+
+    #[test]
+    fn wide_labels_keep_values_right_aligned() {
+        let (mut s, h) = fixture::demo();
+        s.sensors[0].readings = vec![("温度センサー".into(), 45.0)];
+        let t = Theme::dark();
+        let ctx = Ctx {
+            snap: &s,
+            hist: &h,
+            theme: &t,
+            focused: false,
+            zoomed: false,
+            idx: 7,
+        };
+        let mut v = SensorView::default();
+        v.expanded.insert(SensorKind::Cpu);
+        let out = draw(40, 12, |f| render(f, f.area(), &ctx, &v));
+        let row = out.lines().find(|l| l.contains("温")).expect(&out);
+        assert!(row.ends_with("45°C│"), "{row:?}");
     }
 }

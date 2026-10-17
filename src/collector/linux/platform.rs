@@ -5,36 +5,44 @@ use super::{amdgpu, diskstats, hwmon, rapl, topology};
 use crate::collector::{Platform, PlatformData};
 use crate::model::*;
 
+/// Watts per RAPL zone since the previous call. `prev` holds the last good reading per zone; a
+/// failed read keeps that baseline so the next good read doesn't report a giant spike.
 pub fn rapl_watts(
-    prev: &mut Vec<(u64, Instant)>,
+    prev: &mut Vec<Option<(u64, Instant)>>,
     zones: &[rapl::Zone],
     now: Instant,
 ) -> Option<PowerStats> {
-    let cur: Vec<Option<u64>> = zones.iter().map(rapl::read_uj).collect();
+    if prev.len() != zones.len() {
+        *prev = vec![None; zones.len()];
+    }
     let mut out = PowerStats::default();
     let mut any = false;
-    if prev.len() == zones.len() {
-        for ((z, c), (pv, pt)) in zones.iter().zip(&cur).zip(prev.iter()) {
-            let Some(c) = c else { continue };
-            let dt = now.saturating_duration_since(*pt).as_secs_f64();
+    for (i, z) in zones.iter().enumerate() {
+        let Some(cur) = rapl::read_uj(z) else {
+            continue;
+        };
+        if let Some((pv, pt)) = prev[i] {
+            let dt = now.saturating_duration_since(pt).as_secs_f64();
             if dt <= 0.0 {
                 continue;
             }
-            let w = rapl::delta_uj(*pv, *c, z.max_uj) as f64 / 1e6 / dt;
+            let w = rapl::delta_uj(pv, cur, z.max_uj) as f64 / 1e6 / dt;
             let slot = if z.name.starts_with("package") {
-                &mut out.cpu_w
+                Some(&mut out.cpu_w)
             } else if z.name == "psys" {
-                &mut out.system_w
+                Some(&mut out.system_w)
             } else if z.name == "dram" {
-                &mut out.dram_w
+                Some(&mut out.dram_w)
             } else {
-                continue;
+                None
             };
-            *slot = Some(slot.unwrap_or(0.0) + w);
-            any = true;
+            if let Some(slot) = slot {
+                *slot = Some(slot.unwrap_or(0.0) + w);
+                any = true;
+            }
         }
+        prev[i] = Some((cur, now));
     }
-    *prev = cur.into_iter().map(|c| (c.unwrap_or(0), now)).collect();
     any.then_some(out)
 }
 
@@ -42,7 +50,7 @@ pub struct LinuxPlatform {
     root: PathBuf,
     hybrid: Option<(Vec<usize>, Vec<usize>)>,
     zones: Vec<rapl::Zone>,
-    rapl_prev: Vec<(u64, Instant)>,
+    rapl_prev: Vec<Option<(u64, Instant)>>,
     per_core: Vec<f64>,
     #[cfg(target_os = "linux")]
     nvml: Option<super::nvml::NvmlGpu>,
@@ -205,5 +213,31 @@ mod tests {
         put(r, "sys/class/powercap/intel-rapl:0/energy_uj", "3000000");
         let p = rapl_watts(&mut prev, &zones, t0 + Duration::from_secs(1)).unwrap();
         assert_eq!(p.cpu_w, Some(2.0));
+    }
+
+    #[test]
+    fn failed_rapl_read_keeps_previous_baseline() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        let e = "sys/class/powercap/intel-rapl:0/energy_uj";
+        put(r, "sys/class/powercap/intel-rapl:0/name", "package-0");
+        put(r, e, "200000000000");
+        put(
+            r,
+            "sys/class/powercap/intel-rapl:0/max_energy_range_uj",
+            "262143328850",
+        );
+        let zones = rapl::zones(r);
+        let mut prev = Vec::new();
+        let t0 = Instant::now();
+        rapl_watts(&mut prev, &zones, t0);
+        std::fs::remove_file(r.join(e)).unwrap(); // transient read failure
+        assert_eq!(
+            rapl_watts(&mut prev, &zones, t0 + Duration::from_secs(1)),
+            None
+        );
+        put(r, e, "200005000000"); // +5 J over 2 s
+        let p = rapl_watts(&mut prev, &zones, t0 + Duration::from_secs(2)).unwrap();
+        assert!((p.cpu_w.unwrap() - 2.5).abs() < 1e-9, "{p:?}");
     }
 }

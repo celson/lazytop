@@ -208,7 +208,17 @@ impl Collector for DemoCollector {
                     ],
                 },
             ],
-            fans: vec![],
+            // M3 Pro fans idle at 0 rpm
+            fans: vec![
+                Fan {
+                    label: "Fan 0".into(),
+                    rpm: 0.0,
+                },
+                Fan {
+                    label: "Fan 1".into(),
+                    rpm: 0.0,
+                },
+            ],
             procs,
             ai: AiStats::default(),
         };

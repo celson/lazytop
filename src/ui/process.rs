@@ -85,6 +85,8 @@ pub struct ProcView {
     pub selected_pid: Option<u32>,
     pub cursor: usize,
     pub offset: usize,
+    /// Rows visible in the last render; PgUp/PgDn move by this much.
+    pub page: usize,
 }
 
 impl ProcView {

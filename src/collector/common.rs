@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
 
@@ -9,6 +9,10 @@ use crate::model::*;
 
 /// Refresh mounted-disk capacity every N samples.
 const DISK_REFRESH_TICKS: u64 = 30;
+
+/// Reading the process table costs ~9 ms on macOS (hundreds of processes); refresh it at most
+/// this often and reuse the last list in between (btop's default cadence).
+const PROC_REFRESH: Duration = Duration::from_secs(2);
 
 pub fn merge(mut s: Snapshot, pd: PlatformData) -> Snapshot {
     if let Some(chip) = pd.chip {
@@ -53,6 +57,8 @@ pub struct Common {
     users: Users,
     net_counters: HashMap<String, (Counter, Counter)>,
     ticks: u64,
+    procs: Vec<ProcInfo>,
+    procs_at: Option<Instant>,
 }
 
 impl Common {
@@ -66,23 +72,57 @@ impl Common {
             users: Users::new_with_refreshed_list(),
             net_counters: HashMap::new(),
             ticks: 0,
+            procs: Vec::new(),
+            procs_at: None,
         }
+    }
+
+    fn read_procs(&self) -> Vec<ProcInfo> {
+        self.sys
+            .processes()
+            .values()
+            .map(|p| ProcInfo {
+                pid: p.pid().as_u32(),
+                ppid: p.parent().map(|pp| pp.as_u32()),
+                name: p.name().to_string_lossy().into_owned(),
+                cmd: p
+                    .cmd()
+                    .iter()
+                    .map(|c| c.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                user: p
+                    .user_id()
+                    .and_then(|u| self.users.get_user_by_id(u))
+                    .map(|u| u.name().to_string())
+                    .unwrap_or_default(),
+                cpu: p.cpu_usage(),
+                mem: p.memory(),
+                threads: p.tasks().map(|t| t.len()),
+                start_time: p.start_time(),
+            })
+            .collect()
     }
 
     pub fn sample(&mut self) -> Snapshot {
         let now = Instant::now();
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();
-        // Only what the UI shows; cmd/user are read once per process.
-        self.sys.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing()
-                .with_cpu()
-                .with_memory()
-                .with_user(UpdateKind::OnlyIfNotSet)
-                .with_cmd(UpdateKind::OnlyIfNotSet),
-        );
+        let refresh_procs = self
+            .procs_at
+            .is_none_or(|t| now.duration_since(t) >= PROC_REFRESH);
+        if refresh_procs {
+            // Only what the UI shows; cmd/user are read once per process.
+            self.sys.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::nothing()
+                    .with_cpu()
+                    .with_memory()
+                    .with_user(UpdateKind::OnlyIfNotSet)
+                    .with_cmd(UpdateKind::OnlyIfNotSet),
+            );
+        }
         self.nets.refresh(true);
         // Disk capacity barely changes and statfs over every mount costs ~20 ms; refresh rarely.
         if self.ticks.is_multiple_of(DISK_REFRESH_TICKS) {
@@ -122,6 +162,9 @@ impl Common {
                 });
             }
         }
+        // Forget counters of interfaces that went away (VPNs, docks, ...).
+        self.net_counters
+            .retain(|name, _| self.nets.contains_key(name));
         ifaces.sort_by(|a, b| (b.rx + b.tx).total_cmp(&(a.rx + a.tx)));
         let net = NetStats {
             rx: ifaces.iter().map(|i| i.rx).sum(),
@@ -140,37 +183,17 @@ impl Common {
                     .find(|d| d.mount_point() == std::path::Path::new("/"))
             })
             .map(|d| DiskStats {
-                used: d.total_space() - d.available_space(),
+                used: d.total_space().saturating_sub(d.available_space()),
                 total: d.total_space(),
                 ..Default::default()
             })
             .unwrap_or_default();
 
-        let procs = self
-            .sys
-            .processes()
-            .values()
-            .map(|p| ProcInfo {
-                pid: p.pid().as_u32(),
-                ppid: p.parent().map(|pp| pp.as_u32()),
-                name: p.name().to_string_lossy().into_owned(),
-                cmd: p
-                    .cmd()
-                    .iter()
-                    .map(|c| c.to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                user: p
-                    .user_id()
-                    .and_then(|u| self.users.get_user_by_id(u))
-                    .map(|u| u.name().to_string())
-                    .unwrap_or_default(),
-                cpu: p.cpu_usage(),
-                mem: p.memory(),
-                threads: p.tasks().map(|t| t.len()),
-                start_time: p.start_time(),
-            })
-            .collect();
+        if refresh_procs {
+            self.procs = self.read_procs();
+            self.procs_at = Some(now);
+        }
+        let procs = self.procs.clone();
 
         let total_mem = self.sys.total_memory();
         let used_mem = self.sys.used_memory();
@@ -329,6 +352,26 @@ mod tests {
         assert_eq!(s.mem.pressure, Some(0.3));
         assert_eq!(s.mem.swap_total, 2);
     }
+    #[test]
+    fn counters_of_vanished_interfaces_are_dropped() {
+        let mut c = Common::new();
+        c.net_counters
+            .insert("utun-gone".into(), Default::default());
+        c.net_counters.insert("en-gone".into(), Default::default());
+        c.sample();
+        assert!(!c.net_counters.contains_key("en-gone"));
+        assert!(!c.net_counters.contains_key("utun-gone"));
+    }
+
+    #[test]
+    fn process_list_is_reused_between_close_samples() {
+        let mut c = Common::new();
+        let a = c.sample();
+        let b = c.sample();
+        // the process table (~9 ms to read) is refreshed at most every PROC_REFRESH
+        assert_eq!(a.procs, b.procs);
+    }
+
     #[test]
     fn common_samples_real_machine() {
         let mut c = Common::new();

@@ -2,10 +2,14 @@
 use std::time::Instant;
 
 use anyhow::{Context, bail};
-use core_foundation::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
-use core_foundation::base::{CFTypeRef, TCFType, kCFAllocatorDefault};
+use core_foundation::array::{
+    CFArrayAppendValue, CFArrayCreateMutable, CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef,
+    kCFTypeArrayCallBacks,
+};
+use core_foundation::base::{CFRelease, CFTypeRef, TCFType, kCFAllocatorDefault};
 use core_foundation::dictionary::{
-    CFDictionaryCreateMutableCopy, CFDictionaryGetCount, CFDictionaryRef, CFMutableDictionaryRef,
+    CFDictionaryCreateMutableCopy, CFDictionaryGetCount, CFDictionaryRef, CFDictionarySetValue,
+    CFMutableDictionaryRef,
 };
 use core_foundation::string::CFStringRef;
 
@@ -53,12 +57,18 @@ unsafe extern "C" {
     fn IOReportStateGetResidency(ch: CFDictionaryRef, i: i32) -> i64;
 }
 
-const GROUPS: [(&str, Option<&str>); 4] = [
+pub type Groups = [(&'static str, Option<&'static str>)];
+
+/// Cheap groups, sampled every tick.
+pub const CORE_GROUPS: &Groups = &[
     ("Energy Model", None),
     ("CPU Stats", Some("CPU Core Performance States")),
     ("GPU Stats", Some("GPU Performance States")),
-    ("PMP", Some("DCS BW")),
 ];
+
+/// The PMP coprocessor costs ~3.7 ms per sample, so bandwidth gets its own subscription
+/// that callers can sample less often.
+pub const BANDWIDTH_GROUPS: &Groups = &[("PMP", Some("DCS BW"))];
 
 #[derive(Debug, Default, Clone)]
 pub struct IoSample {
@@ -77,14 +87,60 @@ pub struct IoReport {
     dvfs: DvfsTables,
 }
 
+/// Keeps only the channels `calc::wanted_channel` accepts in the `IOReportChannels` array.
+fn prune_channels(dict: CFMutableDictionaryRef) {
+    let Some(arr) = cf::dict_get(dict as CFDictionaryRef, "IOReportChannels") else {
+        return;
+    };
+    let arr = arr as CFArrayRef;
+    let kept = unsafe { CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks) };
+    for i in 0..unsafe { CFArrayGetCount(arr) } {
+        let ch = unsafe { CFArrayGetValueAtIndex(arr, i) } as CFDictionaryRef;
+        let group = cf::to_string(unsafe { IOReportChannelGetGroup(ch) }).unwrap_or_default();
+        let sub = cf::to_string(unsafe { IOReportChannelGetSubGroup(ch) }).unwrap_or_default();
+        let name = cf::to_string(unsafe { IOReportChannelGetChannelName(ch) }).unwrap_or_default();
+        if calc::wanted_channel(&group, &sub, &name) {
+            unsafe { CFArrayAppendValue(kept, ch as *const std::ffi::c_void) };
+        }
+    }
+    let key = cf::cfstr("IOReportChannels");
+    unsafe {
+        CFDictionarySetValue(
+            dict,
+            key.as_concrete_TypeRef() as *const _,
+            kept as *const _,
+        );
+        CFRelease(kept as CFTypeRef);
+    }
+}
+
+impl Drop for IoReport {
+    fn drop(&mut self) {
+        // Both come from Create-rule calls.
+        unsafe {
+            if !self.subbed.is_null() {
+                CFRelease(self.subbed as CFTypeRef);
+            }
+            if !self.sub.is_null() {
+                CFRelease(self.sub as CFTypeRef);
+            }
+        }
+    }
+}
+
 // The subscription is only touched from the collector thread.
 unsafe impl Send for IoReport {}
 
 impl IoReport {
+    /// Subscribes to every group lazytop uses.
     pub fn new() -> anyhow::Result<Self> {
+        Self::with_groups(&[CORE_GROUPS, BANDWIDTH_GROUPS].concat())
+    }
+
+    pub fn with_groups(groups: &Groups) -> anyhow::Result<Self> {
         let mut merged: Option<CFDictionaryRef> = None;
         let mut owned = Vec::new();
-        for (g, sg) in GROUPS {
+        for &(g, sg) in groups {
             let gs = cf::cfstr(g);
             let sgs = sg.map(cf::cfstr);
             let ch = unsafe {
@@ -109,13 +165,20 @@ impl IoReport {
             owned.push(Owned(ch as CFTypeRef));
         }
         let merged = merged.context("no IOReport channel groups available")?;
-        let channels = unsafe {
+        let channels = Owned(unsafe {
             CFDictionaryCreateMutableCopy(kCFAllocatorDefault, CFDictionaryGetCount(merged), merged)
-        };
+        } as CFTypeRef);
         drop(owned);
+        prune_channels(channels.0 as CFMutableDictionaryRef);
         let mut subbed: CFMutableDictionaryRef = std::ptr::null_mut();
         let sub = unsafe {
-            IOReportCreateSubscription(std::ptr::null(), channels, &mut subbed, 0, std::ptr::null())
+            IOReportCreateSubscription(
+                std::ptr::null(),
+                channels.0 as CFMutableDictionaryRef,
+                &mut subbed,
+                0,
+                std::ptr::null(),
+            )
         };
         if sub.is_null() {
             bail!("IOReportCreateSubscription failed");
@@ -123,7 +186,7 @@ impl IoReport {
         Ok(Self {
             sub,
             subbed,
-            _channels: Owned(channels as CFTypeRef),
+            _channels: channels,
             prev: None,
             dvfs: iokit::dvfs_tables(),
         })
@@ -298,6 +361,7 @@ mod tests {
         // frozen CPU energy counters must not be reported as 0 W
         assert_ne!(s.power.cpu_w, Some(0.0), "{s:?}");
         assert!(s.gpu_usage.is_some());
+        drop(r); // releasing the subscription must not crash
         let bw = s.bandwidth.expect("DCS BW histogram");
         assert!(bw.total > 0.0 && bw.total < 200e9, "{bw:?}");
         assert!(bw.cpu > 0.0, "{bw:?}");

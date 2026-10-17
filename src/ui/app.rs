@@ -80,6 +80,15 @@ impl App {
     }
 
     pub fn on_snapshot(&mut self, s: Snapshot) {
+        let first = self.snap.is_none();
+        if first
+            && s.gpu.is_none()
+            && s.power.is_none()
+            && s.bandwidth.is_none()
+            && s.sensors.is_empty()
+        {
+            self.set_status("platform metrics unavailable (sysinfo only) — press ? for details");
+        }
         self.hist.push(&s);
         self.notices = notices_for(&s);
         self.snap = Some(s);
@@ -241,7 +250,7 @@ impl App {
     fn on_key_procs(&mut self, k: KeyEvent) {
         let (rows, procs) = self.proc_rows();
         self.procs.sync(&rows, &procs);
-        let page = 10;
+        let page = self.procs.page.max(1) as isize;
         match k.code {
             KeyCode::Up => self.procs.move_by(-1, &rows, &procs),
             KeyCode::Down | KeyCode::Char('j') => self.procs.move_by(1, &rows, &procs),
@@ -486,5 +495,33 @@ mod tests {
         assert_eq!(a.mode, Mode::Help);
         a.on_key(key(KeyCode::Char('?')));
         assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn status_notice_when_no_platform_metrics() {
+        let mut a = App::new(
+            Config::default(),
+            Theme::dark(),
+            None,
+            Box::new(|_, _| Ok(())),
+        );
+        let mut s = DemoCollector::new(1).sample();
+        s.gpu = None;
+        s.power = None;
+        s.bandwidth = None;
+        s.sensors.clear();
+        s.fans.clear();
+        a.on_snapshot(s);
+        assert!(
+            a.status_text().is_some_and(|m| m.contains("press ?")),
+            "{:?}",
+            a.status
+        );
+    }
+
+    #[test]
+    fn no_notice_with_platform_metrics() {
+        let a = app();
+        assert!(a.status_text().is_none());
     }
 }

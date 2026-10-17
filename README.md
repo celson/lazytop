@@ -24,6 +24,10 @@ lazytop shows CPU efficiency/performance clusters, GPU / Media / Neural Engine, 
 mise use -g github:celson/lazytop
 ```
 
+If your mise config sets `minimum_release_age`, a fresh release is hidden until it is that old
+(`no versions found ... matching date filter`). Pin the version (`github:celson/lazytop@0.1.0`) or
+exempt lazytop: `mise settings add minimum_release_age_excludes github:celson/lazytop`.
+
 ### From source
 
 ```bash
