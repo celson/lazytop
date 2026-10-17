@@ -95,6 +95,17 @@ An invalid config file makes lazytop exit with code 2 and a message.
 - **Linux**: `/proc`, `/sys/class/hwmon`, `/sys/class/powercap` (RAPL), NVML, `/sys/class/drm` (amdgpu).
 - **Both**: [sysinfo](https://crates.io/crates/sysinfo) for processes, network and disks.
 
+## Releasing
+
+1. Bump `version` in `Cargo.toml` (and run `cargo build` so `Cargo.lock` follows), commit.
+2. `mise run release` — checks the tree is clean and tests pass, then tags `v<version>` and pushes the tag.
+3. The **Release** workflow verifies the tag matches `Cargo.toml`, runs fmt/clippy/tests, builds
+   `darwin-arm64`, `darwin-amd64`, `linux-amd64` and `linux-arm64` archives, and publishes them with
+   `checksums.txt` as a GitHub Release.
+
+To build the binaries without publishing, run the workflow manually (Actions → Release → Run workflow);
+the archives are attached to the run as artifacts.
+
 ## License
 
 MIT
