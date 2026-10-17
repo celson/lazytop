@@ -106,7 +106,7 @@ impl Collector for DemoCollector {
             .collect();
         procs[0].ppid = None;
         let r = self.rand();
-        Snapshot {
+        let mut snap = Snapshot {
             host: HostInfo {
                 chip: "Apple M3 Pro".into(),
                 os: "macOS 27.0".into(),
@@ -211,7 +211,9 @@ impl Collector for DemoCollector {
             fans: vec![],
             procs,
             ai: AiStats::default(),
-        }
+        };
+        snap.ai = super::ai::analyze(&snap);
+        snap
     }
 }
 
@@ -240,5 +242,7 @@ mod tests {
             assert!((0.0..=1.0).contains(&c.usage));
         }
         assert!(s.mem.used <= s.mem.total);
+        assert_eq!(s.ai.runtimes.len(), 1);
+        assert!(s.ai.budget_b.is_some());
     }
 }
