@@ -21,7 +21,7 @@ fn row(label: &str, state: EngineState, right: String, width: u16, t: &Theme) ->
     let left = format!("{label:<6}");
     let text = state.label().to_string();
     let used = 6 + 2 + text.len();
-    let pad = (width as usize).saturating_sub(used + right.chars().count());
+    let pad = (width as usize).saturating_sub(used + fmt::width(&right));
     let style = if state == EngineState::Active {
         Style::default().fg(t.accent)
     } else {

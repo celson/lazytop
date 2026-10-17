@@ -80,6 +80,16 @@ pub fn thousands(n: u32) -> String {
     out
 }
 
+/// Display columns of `s` (CJK and other wide characters count as 2).
+pub fn width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// Spaces needed between `left` and `right` so the pair spans `total` columns.
+pub fn pad(left: &str, right: &str, total: usize) -> usize {
+    total.saturating_sub(width(left) + width(right))
+}
+
 /// Truncates to `width` display columns (CJK = 2), adding `…` when cut.
 pub fn truncate(s: &str, width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
@@ -139,6 +149,14 @@ mod tests {
         );
         assert_eq!(uptime(Duration::from_secs(2 * 3600 + 5 * 60)), "2h 5m");
         assert_eq!(thousands(35431), "35.431");
+    }
+
+    #[test]
+    fn display_width() {
+        assert_eq!(width("abc"), 3);
+        assert_eq!(width("日本"), 4);
+        assert_eq!(pad("日本", "5 KB/s", 20), 10);
+        assert_eq!(pad("a very long label", "x", 5), 0);
     }
 
     #[test]

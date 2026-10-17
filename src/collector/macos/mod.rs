@@ -24,11 +24,15 @@ pub use platform::MacPlatform;
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use super::{calc, iokit, ioreport::IoReport, smc::Smc, sys};
+    use super::ioreport::{BANDWIDTH_GROUPS, CORE_GROUPS, IoReport};
+    use super::{calc, iokit, smc::Smc, sys};
     use crate::collector::{Platform, PlatformData};
-    use crate::model::GpuStats;
+    use crate::model::{Bandwidth, GpuStats};
 
-    const SMC_EVERY: u64 = 3;
+    /// Temperatures, fans and GPU memory change slowly and cost ~18 ms together; read every 3 samples.
+    const SLOW_EVERY: u64 = 3;
+    /// The bandwidth (PMP) subscription costs ~3.7 ms; read every 2 samples (2 s average at 1 s).
+    const BANDWIDTH_EVERY: u64 = 2;
 
     pub struct MacPlatform {
         chip: Option<String>,
@@ -37,18 +41,24 @@ mod platform {
         page_size: u64,
         total: u64,
         ioreport: Option<IoReport>,
+        bandwidth: Option<IoReport>,
+        last_bandwidth: Option<Bandwidth>,
         smc: Option<Smc>,
-        /// Last temperatures/fans; SMC is read every `SMC_EVERY` samples (~16 ms per read).
+        /// Last temperatures/fans and GPU memory, refreshed every `SLOW_EVERY` samples.
         sensors: (Vec<crate::model::SensorGroup>, Vec<crate::model::Fan>),
+        gpu_mem: Option<u64>,
         ticks: u64,
     }
 
     impl MacPlatform {
         pub fn new() -> Self {
-            let ioreport = IoReport::new()
+            let ioreport = IoReport::with_groups(CORE_GROUPS)
                 .map_err(|e| crate::log::warn_once("ioreport", &e.to_string()))
                 .ok();
-            if let Some(r) = &ioreport {
+            let bandwidth = IoReport::with_groups(BANDWIDTH_GROUPS)
+                .map_err(|e| crate::log::warn_once("ioreport-bandwidth", &e.to_string()))
+                .ok();
+            for r in [&ioreport, &bandwidth].into_iter().flatten() {
                 r.log_channels();
             }
             let smc = Smc::open()
@@ -62,8 +72,11 @@ mod platform {
                 page_size: sys::sysctl_u64("hw.pagesize").unwrap_or(16_384),
                 total: sys::sysctl_u64("hw.memsize").unwrap_or(0),
                 ioreport,
+                bandwidth,
+                last_bandwidth: None,
                 smc,
                 sensors: (Vec::new(), Vec::new()),
+                gpu_mem: None,
                 ticks: 0,
             }
         }
@@ -97,6 +110,10 @@ mod platform {
             } else {
                 crate::log::warn_once("vm", "host_statistics64 failed");
             }
+            let slow_tick = self.ticks.is_multiple_of(SLOW_EVERY);
+            if slow_tick {
+                self.gpu_mem = iokit::gpu_mem_used();
+            }
             if let Some(r) = &mut self.ioreport {
                 match r.sample() {
                     Ok(s) => {
@@ -106,7 +123,7 @@ mod platform {
                                 name: format!("{} GPU", self.chip.clone().unwrap_or_default()),
                                 usage: u,
                                 mhz: s.gpu_mhz,
-                                mem_used: iokit::gpu_mem_used(),
+                                mem_used: self.gpu_mem,
                                 mem_total: None,
                             });
                         }
@@ -117,13 +134,23 @@ mod platform {
                         {
                             pd.power = Some(s.power);
                         }
-                        pd.bandwidth = s.bandwidth;
                     }
                     Err(e) => crate::log::warn_once("ioreport-sample", &e.to_string()),
                 }
             }
+            if let Some(r) = &mut self.bandwidth
+                // tick 0 primes the subscription; odd ticks read it, so the first shown sample
+                // (after the collector's warm-up) already has bandwidth.
+                && (self.ticks == 0 || self.ticks % BANDWIDTH_EVERY == 1)
+            {
+                match r.sample() {
+                    Ok(s) => self.last_bandwidth = s.bandwidth.or(self.last_bandwidth.take()),
+                    Err(e) => crate::log::warn_once("ioreport-bandwidth-sample", &e.to_string()),
+                }
+            }
+            pd.bandwidth = self.last_bandwidth.clone();
             if let Some(smc) = &mut self.smc {
-                if self.ticks.is_multiple_of(SMC_EVERY) {
+                if slow_tick {
                     self.sensors = (smc.temperatures(), smc.fans());
                 }
                 pd.sensors = self.sensors.0.clone();
@@ -153,6 +180,8 @@ mod platform {
                 assert_eq!(pd.cores_e.unwrap() + pd.cores_p.unwrap(), num_cores());
                 assert_eq!(pd.clusters.len(), 2, "{:?}", pd.clusters);
                 assert!(pd.gpu.is_some() && pd.power.is_some());
+                // bandwidth is sampled less often but must be there from the first shown frame
+                assert!(pd.bandwidth.is_some(), "no bandwidth on 2nd sample");
                 // whole-system power from SMC PSTR, not just the GPU/ANE IOReport sum
                 let sys_w = pd.power.as_ref().unwrap().system_w.unwrap();
                 assert!(sys_w > 0.5, "{sys_w}");

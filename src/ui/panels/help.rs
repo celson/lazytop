@@ -32,18 +32,8 @@ pub fn render(f: &mut Frame, area: Rect, t: &Theme, notices: &[String]) {
     let block = panel_block("Help", None, true, t);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let mut lines: Vec<Line> = KEYS
-        .iter()
-        .map(|(k, d)| {
-            Line::from(vec![
-                Span::styled(
-                    format!("{k:<24}"),
-                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(d.to_string(), Style::default().fg(t.fg)),
-            ])
-        })
-        .collect();
+    // Unavailable metrics first: on short terminals the key list is what gets cut off.
+    let mut lines: Vec<Line> = Vec::new();
     if !notices.is_empty() {
         lines.push(Line::styled(
             "Unavailable metrics",
@@ -52,7 +42,17 @@ pub fn render(f: &mut Frame, area: Rect, t: &Theme, notices: &[String]) {
         for n in notices {
             lines.push(Line::styled(format!("• {n}"), Style::default().fg(t.warn)));
         }
+        lines.push(Line::raw(""));
     }
+    lines.extend(KEYS.iter().map(|(k, d)| {
+        Line::from(vec![
+            Span::styled(
+                format!("{k:<24}"),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(d.to_string(), Style::default().fg(t.fg)),
+        ])
+    }));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
@@ -81,5 +81,18 @@ mod tests {
         ] {
             assert!(out.contains(k), "missing {k}\n{out}");
         }
+    }
+
+    #[test]
+    fn notices_visible_on_short_terminal() {
+        let out = draw(80, 14, |f| {
+            render(
+                f,
+                f.area(),
+                &Theme::dark(),
+                &["power: RAPL not readable".into()],
+            )
+        });
+        assert!(out.contains("RAPL not readable"), "{out}");
     }
 }

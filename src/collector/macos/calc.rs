@@ -126,6 +126,23 @@ pub fn mem_detail(
     }
 }
 
+/// IOReport channels lazytop reads; everything else is dropped from the subscription
+/// (sampling ~260 channels costs several ms per tick, these ~30 a fraction of it).
+pub fn wanted_channel(group: &str, subgroup: &str, name: &str) -> bool {
+    match group {
+        "Energy Model" => {
+            matches!(name, "GPU Energy" | "CPU Energy" | "DRAM") || name.starts_with("ANE")
+        }
+        "CPU Stats" => {
+            subgroup == "CPU Core Performance States"
+                && (name.starts_with("ECPU") || name.starts_with("PCPU"))
+        }
+        "GPU Stats" => subgroup == "GPU Performance States" && name == "GPUPH",
+        "PMP" => subgroup == "DCS BW" && name.ends_with("RD+WR"),
+        _ => false,
+    }
+}
+
 /// Mean of a residency histogram whose state names are bin values like `"  12GB/s"` / `" 500MB/s"`.
 /// Returns GB/s; `None` when no residency or no parsable bin.
 pub fn histogram_mean_gbps(states: &[(String, i64)]) -> Option<f64> {
@@ -301,6 +318,39 @@ mod tests {
         assert_eq!(m.free, total - m.used);
         assert_eq!(m.pressure, Some(0.26));
         assert_eq!((m.swap_used, m.swap_total), (1, 2));
+    }
+
+    #[test]
+    fn subscription_keeps_only_used_channels() {
+        assert!(wanted_channel("Energy Model", "", "GPU Energy"));
+        assert!(wanted_channel("Energy Model", "", "CPU Energy"));
+        assert!(wanted_channel("Energy Model", "", "ANE"));
+        assert!(wanted_channel("Energy Model", "", "DRAM"));
+        assert!(!wanted_channel("Energy Model", "", "PCPUDTL4f"));
+        assert!(!wanted_channel("Energy Model", "", "ECPU0_SRAM"));
+        assert!(wanted_channel(
+            "CPU Stats",
+            "CPU Core Performance States",
+            "ECPU000"
+        ));
+        assert!(wanted_channel(
+            "CPU Stats",
+            "CPU Core Performance States",
+            "PCPU104"
+        ));
+        assert!(wanted_channel(
+            "GPU Stats",
+            "GPU Performance States",
+            "GPUPH"
+        ));
+        assert!(!wanted_channel(
+            "GPU Stats",
+            "GPU Performance States",
+            "AFR"
+        ));
+        assert!(wanted_channel("PMP", "DCS BW", "AGX RD+WR"));
+        assert!(!wanted_channel("PMP", "DCS BW", "AGX RD"));
+        assert!(!wanted_channel("PMP", "Used stack", "Used stack(1)"));
     }
 
     #[test]

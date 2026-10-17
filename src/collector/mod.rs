@@ -79,6 +79,9 @@ pub enum Control {
     Quit,
 }
 
+/// Gap between the discarded priming sample and the first real one.
+const WARMUP: Duration = Duration::from_millis(250);
+
 /// Runs `c` on its own thread. The thread exits when the receiver is dropped or on `Control::Quit`.
 pub fn spawn(
     mut c: Box<dyn Collector>,
@@ -91,6 +94,10 @@ pub fn spawn(
         .spawn(move || {
             let mut interval = interval;
             let mut paused = false;
+            // Rates, IOReport residencies and process CPU% are deltas: prime them with a
+            // discarded sample so the first frame shows real values instead of zeros.
+            let _ = c.sample();
+            thread::sleep(WARMUP.min(interval));
             loop {
                 let started = Instant::now();
                 if !paused && tx.send(c.sample()).is_err() {
@@ -127,6 +134,15 @@ mod tests {
             s.host.cores_total = self.0 as usize;
             s
         }
+    }
+
+    #[test]
+    fn first_snapshot_comes_after_a_discarded_warmup_sample() {
+        let (rx, ctl) = spawn(Box::new(Fake(0)), Duration::from_millis(20));
+        let first = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // sample #1 primes counters (IOReport/sysinfo deltas) and is not sent
+        assert_eq!(first.host.cores_total, 2);
+        ctl.send(Control::Quit).unwrap();
     }
 
     #[test]

@@ -70,6 +70,7 @@ pub fn render(
     }
 
     let visible = table_area.height.saturating_sub(1) as usize;
+    v.page = visible;
     if v.cursor < v.offset {
         v.offset = v.cursor;
     } else if visible > 0 && v.cursor >= v.offset + visible {

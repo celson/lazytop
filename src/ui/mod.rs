@@ -316,4 +316,17 @@ mod tests {
         drop(tx);
         assert!(drain(&rx, &mut a).is_err());
     }
+
+    #[test]
+    fn page_keys_move_one_visible_page() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut a = app();
+        a.on_key(KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+        let _ = dump(&mut a, 120, 40); // zoomed process table: ~35 visible rows
+        let page = a.procs.page;
+        assert!(page > 10, "page={page}");
+        a.on_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(a.procs.cursor, page.min(31));
+    }
 }
