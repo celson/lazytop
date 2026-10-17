@@ -1,6 +1,9 @@
 pub mod amdgpu;
 pub mod diskstats;
 pub mod hwmon;
+#[cfg(target_os = "linux")]
+pub mod nvml;
+pub mod platform;
 pub mod rapl;
 pub mod topology;
 
