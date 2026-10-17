@@ -57,7 +57,16 @@ fn preferred_height(p: PanelId) -> Constraint {
     }
 }
 
-pub fn compute(area: Rect, visible: &[PanelId], zoomed: Option<PanelId>) -> Vec<(PanelId, Rect)> {
+/// Minimum height of a panel in the single-column layout.
+pub const NARROW_MIN_H: u16 = 8;
+
+/// `focus` keeps the focused panel on screen when the single-column layout can't fit every panel.
+pub fn compute(
+    area: Rect,
+    visible: &[PanelId],
+    zoomed: Option<PanelId>,
+    focus: PanelId,
+) -> Vec<(PanelId, Rect)> {
     if let Some(z) = zoomed {
         return vec![(z, area)];
     }
@@ -98,14 +107,14 @@ pub fn compute(area: Rect, visible: &[PanelId], zoomed: Option<PanelId>) -> Vec<
             .into_iter()
             .filter(|p| visible.contains(p))
             .collect();
-        let heights: Vec<Constraint> = order
-            .iter()
-            .map(|p| match p {
-                PanelId::AiWorkload | PanelId::AiRuntime => Constraint::Length(8),
-                PanelId::Processes => Constraint::Min(8),
-                _ => Constraint::Min(6),
-            })
-            .collect();
+        // Show as many panels as fit at NARROW_MIN_H, as a window that contains the focus.
+        let fit = ((area.height / NARROW_MIN_H) as usize).clamp(1, order.len().max(1));
+        let pos = order.iter().position(|p| *p == focus).unwrap_or(0);
+        let start = pos
+            .saturating_sub(fit - 1)
+            .min(order.len().saturating_sub(fit));
+        let order: Vec<PanelId> = order.into_iter().skip(start).take(fit).collect();
+        let heights = vec![Constraint::Fill(1); order.len()];
         let areas = Layout::vertical(heights).split(area);
         out.extend(order.into_iter().zip(areas.iter().copied()));
     }
@@ -129,7 +138,12 @@ mod tests {
 
     #[test]
     fn wide_two_columns() {
-        let r = compute(Rect::new(0, 0, 160, 48), &PanelId::ALL, None);
+        let r = compute(
+            Rect::new(0, 0, 160, 48),
+            &PanelId::ALL,
+            None,
+            PanelId::Processes,
+        );
         assert_eq!(ids(&r), PanelId::ALL.to_vec());
         let cpu = r.iter().find(|x| x.0 == PanelId::Cpu).unwrap().1;
         let gpu = r.iter().find(|x| x.0 == PanelId::Gpu).unwrap().1;
@@ -146,22 +160,51 @@ mod tests {
             .into_iter()
             .filter(|p| *p != PanelId::Gpu)
             .collect();
-        let r = compute(Rect::new(0, 0, 160, 48), &vis, None);
+        let r = compute(Rect::new(0, 0, 160, 48), &vis, None, PanelId::Processes);
         let cpu = r.iter().find(|x| x.0 == PanelId::Cpu).unwrap().1;
         assert_eq!(cpu.width, 160);
     }
 
     #[test]
     fn narrow_single_column() {
-        let r = compute(Rect::new(0, 0, 80, 60), &PanelId::ALL, None);
+        let r = compute(
+            Rect::new(0, 0, 80, 60),
+            &PanelId::ALL,
+            None,
+            PanelId::Processes,
+        );
         assert!(r.iter().all(|(_, a)| a.width == 80));
+    }
+
+    #[test]
+    fn narrow_short_shows_window_around_focus() {
+        let area = Rect::new(0, 0, 80, 22);
+        for focus in PanelId::ALL {
+            let r = compute(area, &PanelId::ALL, None, focus);
+            assert!(
+                r.iter().any(|(p, _)| *p == focus),
+                "{focus:?} not shown: {r:?}"
+            );
+            for (p, a) in &r {
+                assert!(a.height >= NARROW_MIN_H, "{p:?} too short: {a:?}");
+                assert!(a.bottom() <= area.bottom());
+            }
+        }
+        // first panels shown when focus is at the top
+        let r = compute(area, &PanelId::ALL, None, PanelId::AiWorkload);
+        assert_eq!(r[0].0, PanelId::AiWorkload);
     }
 
     #[test]
     fn zoom_fills_area() {
         let area = Rect::new(0, 0, 100, 30);
         assert_eq!(
-            compute(area, &PanelId::ALL, Some(PanelId::Sensors)),
+            compute(
+                area,
+                &PanelId::ALL,
+                Some(PanelId::Sensors),
+                PanelId::Sensors
+            ),
             vec![(PanelId::Sensors, area)]
         );
     }

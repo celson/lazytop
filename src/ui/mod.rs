@@ -61,7 +61,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     let visible = app.visible();
     let zoom = app.zoomed.then_some(app.focus);
-    for (id, r) in layout::compute(body, &visible, zoom) {
+    for (id, r) in layout::compute(body, &visible, zoom, app.focus) {
         let ctx = Ctx {
             snap: &snap,
             hist: &app.hist,
