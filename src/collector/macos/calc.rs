@@ -126,16 +126,38 @@ pub fn mem_detail(
     }
 }
 
+/// Mean of a residency histogram whose state names are bin values like `"  12GB/s"` / `" 500MB/s"`.
+/// Returns GB/s; `None` when no residency or no parsable bin.
+pub fn histogram_mean_gbps(states: &[(String, i64)]) -> Option<f64> {
+    let (mut weighted, mut total) = (0.0, 0i64);
+    for (name, res) in states {
+        let n = name.trim();
+        let gb = if let Some(v) = n.strip_suffix("GB/s") {
+            v.trim().parse::<f64>().ok()
+        } else if let Some(v) = n.strip_suffix("MB/s") {
+            v.trim().parse::<f64>().ok().map(|m| m / 1000.0)
+        } else {
+            None
+        };
+        let (Some(gb), r) = (gb, (*res).max(0)) else {
+            continue;
+        };
+        weighted += gb * r as f64;
+        total += r;
+    }
+    (total > 0).then(|| weighted / total as f64)
+}
+
 pub fn bandwidth_bucket(channel: &str) -> Bucket {
     let c = channel.to_uppercase();
-    if c.contains("CPU") {
+    if c.contains("CPU") || c.starts_with("EACC") || c.starts_with("PACC") {
         Bucket::Cpu
-    } else if c.starts_with("GFX") || c.starts_with("GPU") {
+    } else if c.starts_with("GFX") || c.starts_with("GPU") || c.starts_with("AGX") {
         Bucket::Gpu
     } else if c.starts_with("ANE") {
         Bucket::Ane
     } else if [
-        "AVE", "VDEC", "VENC", "ISP", "MSR", "JPG", "PRORES", "MEDIA",
+        "AVE", "AVD", "VDEC", "VENC", "ISP", "MSR", "JPG", "JPEG", "SCODEC", "PRORES", "MEDIA",
     ]
     .iter()
     .any(|p| c.starts_with(p))
@@ -242,6 +264,26 @@ mod tests {
         assert_eq!(m.free, total - m.used);
         assert_eq!(m.pressure, Some(0.26));
         assert_eq!((m.swap_used, m.swap_total), (1, 2));
+    }
+
+    #[test]
+    fn histogram_mean_from_bin_labels() {
+        let s = st(&[("   2GB/s", 3), ("   4GB/s", 1), ("  64GB/s", 0)]);
+        assert_eq!(histogram_mean_gbps(&s), Some(2.5));
+        assert_eq!(histogram_mean_gbps(&st(&[("   2GB/s", 0)])), None);
+        assert_eq!(histogram_mean_gbps(&st(&[("garbage", 5)])), None);
+        assert_eq!(histogram_mean_gbps(&st(&[(" 500MB/s", 1)])), Some(0.5));
+    }
+
+    #[test]
+    fn dcs_agent_buckets() {
+        assert_eq!(bandwidth_bucket("EACC0 RD+WR"), Bucket::Cpu);
+        assert_eq!(bandwidth_bucket("PACC0 RD+WR"), Bucket::Cpu);
+        assert_eq!(bandwidth_bucket("AGX RD+WR"), Bucket::Gpu);
+        assert_eq!(bandwidth_bucket("AVD RD+WR"), Bucket::Media);
+        assert_eq!(bandwidth_bucket("JPEG RD+WR"), Bucket::Media);
+        assert_eq!(bandwidth_bucket("SCODEC RD+WR"), Bucket::Media);
+        assert_eq!(bandwidth_bucket("DISPEXT0 RD+WR"), Bucket::Other);
     }
 
     #[test]
