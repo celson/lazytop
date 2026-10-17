@@ -1,6 +1,6 @@
 //! Pure math behind the macOS backend; no FFI here so it is tested on every OS.
 use crate::collector::MemDetail;
-use crate::model::{Bandwidth, SensorKind};
+use crate::model::{Bandwidth, PowerStats, SensorKind};
 
 pub const IDLE_STATES: [&str; 3] = ["IDLE", "OFF", "DOWN"];
 
@@ -146,6 +146,22 @@ pub fn histogram_mean_gbps(states: &[(String, i64)]) -> Option<f64> {
         total += r;
     }
     (total > 0).then(|| weighted / total as f64)
+}
+
+/// On some macOS releases the mJ CPU/DRAM energy counters stop updating: a zero CPU delta while
+/// the CPU is busy means "unavailable", not 0 W, and DRAM never really draws 0 W. The system total
+/// is only the sum of parts when the CPU part is known; otherwise it stays `None` (shown as —).
+pub fn finalize_power(mut p: PowerStats, cpu_busy: bool) -> PowerStats {
+    if cpu_busy && p.cpu_w == Some(0.0) {
+        p.cpu_w = None;
+    }
+    if p.dram_w == Some(0.0) {
+        p.dram_w = None;
+    }
+    p.system_w = p
+        .cpu_w
+        .map(|cpu| cpu + [p.gpu_w, p.ane_w, p.dram_w].iter().flatten().sum::<f64>());
+    p
 }
 
 /// Per-agent DCS bandwidth (bytes/s) → buckets. Total is the sum of agents (same convention as
@@ -294,6 +310,39 @@ mod tests {
         assert_eq!(histogram_mean_gbps(&st(&[("   2GB/s", 0)])), None);
         assert_eq!(histogram_mean_gbps(&st(&[("garbage", 5)])), None);
         assert_eq!(histogram_mean_gbps(&st(&[(" 500MB/s", 1)])), Some(0.5));
+    }
+
+    #[test]
+    fn frozen_cpu_energy_makes_cpu_and_system_unknown() {
+        let p = PowerStats {
+            cpu_w: Some(0.0),
+            gpu_w: Some(0.05),
+            ane_w: Some(0.0),
+            dram_w: Some(0.0),
+            system_w: None,
+        };
+        let f = finalize_power(p, true);
+        assert_eq!((f.cpu_w, f.dram_w, f.system_w), (None, None, None));
+        assert_eq!((f.gpu_w, f.ane_w), (Some(0.05), Some(0.0)));
+    }
+
+    #[test]
+    fn working_cpu_energy_sums_system() {
+        let p = PowerStats {
+            cpu_w: Some(2.0),
+            gpu_w: Some(0.5),
+            ane_w: Some(0.0),
+            dram_w: Some(0.5),
+            system_w: None,
+        };
+        assert_eq!(finalize_power(p, true).system_w, Some(3.0));
+        // idle CPU reporting 0 W is trusted when the CPU is idle
+        let idle = PowerStats {
+            cpu_w: Some(0.0),
+            gpu_w: Some(0.0),
+            ..Default::default()
+        };
+        assert_eq!(finalize_power(idle, false).cpu_w, Some(0.0));
     }
 
     #[test]

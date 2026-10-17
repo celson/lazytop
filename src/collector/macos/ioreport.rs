@@ -243,29 +243,14 @@ impl IoReport {
             let mhz = per.iter().filter_map(|p| p.1).max();
             out.clusters.push(CpuCluster { kind, usage, mhz });
         }
-        // On some macOS releases the mJ CPU/DRAM energy counters stop updating; a zero delta
-        // while the CPU is busy means "unavailable", not 0 W.
         let cpu_busy = out.clusters.iter().any(|c| c.usage > 0.01);
         if cpu_busy && out.power.cpu_w == Some(0.0) {
             crate::log::warn_once(
                 "ioreport-cpu-energy",
                 "CPU energy counter not updating; CPU power shown as —",
             );
-            out.power.cpu_w = None;
         }
-        if out.power.dram_w == Some(0.0) {
-            out.power.dram_w = None;
-        }
-        let sys: f64 = [
-            out.power.cpu_w,
-            out.power.gpu_w,
-            out.power.ane_w,
-            out.power.dram_w,
-        ]
-        .iter()
-        .flatten()
-        .sum();
-        out.power.system_w = (sys > 0.0).then_some(sys);
+        out.power = calc::finalize_power(std::mem::take(&mut out.power), cpu_busy);
         out.bandwidth = (!agents.is_empty()).then(|| calc::bandwidth_from_agents(&agents));
         out
     }
@@ -296,7 +281,7 @@ mod tests {
 
     #[test]
     fn smoke_two_samples() {
-        if std::env::consts::ARCH != "aarch64" {
+        if !crate::collector::macos::hw_smoke() {
             return;
         }
         let mut r = IoReport::new().expect("subscribe");

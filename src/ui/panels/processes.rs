@@ -103,7 +103,7 @@ pub fn render(
     header_cells.push(head(SortKey::Name, "NAME"));
     let name_w = table_area
         .width
-        .saturating_sub(if c.zoomed { 40 } else { 28 }) as usize;
+        .saturating_sub(if c.zoomed { 41 } else { 29 }) as usize;
 
     let body: Vec<TRow> = rows
         .iter()
@@ -140,8 +140,9 @@ pub fn render(
             TRow::new(cells).style(style)
         })
         .collect();
+    // PID column fits "4.194.303" (Linux pid_max with thousands separators).
     let mut widths = vec![
-        Constraint::Length(8),
+        Constraint::Length(9),
         Constraint::Length(6),
         Constraint::Length(8),
     ];
@@ -258,5 +259,24 @@ mod tests {
         let mut v = ProcView::from_cfg(&ProcCfg::default());
         let out = draw(120, 30, |f| render(f, f.area(), &ctx, &mut v, false, true));
         assert!(out.contains("Command") && out.contains("User") && out.contains("Threads"));
+    }
+
+    #[test]
+    fn large_linux_pids_are_not_truncated() {
+        let (mut s, h) = fixture::demo();
+        s.procs[0].pid = 4_194_303;
+        s.procs[0].cpu = 99.0;
+        let t = Theme::dark();
+        let ctx = Ctx {
+            snap: &s,
+            hist: &h,
+            theme: &t,
+            focused: true,
+            zoomed: false,
+            idx: 8,
+        };
+        let mut v = ProcView::from_cfg(&ProcCfg::default());
+        let out = draw(80, 10, |f| render(f, f.area(), &ctx, &mut v, false, false));
+        assert!(out.contains("4.194.303"), "{out}");
     }
 }

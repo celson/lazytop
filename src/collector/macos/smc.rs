@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn smoke_reads_temperatures() {
-        if std::env::consts::ARCH != "aarch64" {
+        if !crate::collector::macos::hw_smoke() {
             return;
         }
         let mut smc = Smc::open().unwrap();
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn smoke_system_power() {
-        if std::env::consts::ARCH != "aarch64" {
+        if !crate::collector::macos::hw_smoke() {
             return;
         }
         let mut smc = Smc::open().unwrap();

@@ -174,7 +174,7 @@ mod tests {
     fn smoke_registry_reads() {
         let t = dvfs_tables();
         // Apple Silicon always exposes pmgr tables; Intel Macs return empty.
-        if std::env::consts::ARCH == "aarch64" {
+        if crate::collector::macos::hw_smoke() {
             assert!(!t.ecpu.is_empty() && !t.pcpu.is_empty(), "{t:?}");
         }
         assert!(disk_totals().is_some());

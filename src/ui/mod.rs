@@ -6,7 +6,7 @@ pub mod process;
 pub mod theme;
 pub mod widgets;
 
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -157,16 +157,38 @@ pub fn dump(app: &mut App, w: u16, h: u16) -> String {
         .join("\n")
 }
 
+/// Applies every pending snapshot. `Ok(true)` if any arrived; an error once the collector thread
+/// is gone (e.g. it panicked), so the UI stops instead of showing frozen data.
+pub fn drain(rx: &Receiver<Snapshot>, app: &mut App) -> anyhow::Result<bool> {
+    let mut got = false;
+    loop {
+        match rx.try_recv() {
+            Ok(s) => {
+                app.on_snapshot(s);
+                got = true;
+            }
+            Err(TryRecvError::Empty) => return Ok(got),
+            Err(TryRecvError::Disconnected) => anyhow::bail!("collector stopped unexpectedly"),
+        }
+    }
+}
+
 pub fn run(mut app: App, rx: Receiver<Snapshot>) -> anyhow::Result<()> {
-    // ratatui::init enables raw mode + alternate screen and installs a panic hook that restores the terminal.
-    let mut terminal = ratatui::init();
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "an interactive terminal is required (use --dump WIDTHxHEIGHT for text output)"
+        );
+    }
+    // try_init enables raw mode + alternate screen and installs a panic hook that restores the terminal.
+    let mut terminal =
+        ratatui::try_init().map_err(|e| anyhow::anyhow!("failed to initialize terminal: {e}"))?;
     let res = (|| -> anyhow::Result<()> {
         // Redraw only when something changed: a new snapshot, input, resize, or the status line expiring.
         let mut dirty = true;
         let mut status_shown = false;
         loop {
-            while let Ok(s) = rx.try_recv() {
-                app.on_snapshot(s);
+            if drain(&rx, &mut app)? {
                 dirty = true;
             }
             if status_shown != app.status_text().is_some() {
@@ -282,5 +304,16 @@ mod tests {
         let out = dump(&mut a, 160, 48);
         assert!(out.contains("core 10"));
         assert!(!out.contains("[8] PROCESSES"));
+    }
+
+    #[test]
+    fn drain_errors_when_collector_is_gone() {
+        let mut a = app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(DemoCollector::new(2).sample()).unwrap();
+        assert!(drain(&rx, &mut a).unwrap());
+        assert!(!drain(&rx, &mut a).unwrap());
+        drop(tx);
+        assert!(drain(&rx, &mut a).is_err());
     }
 }

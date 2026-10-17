@@ -1,4 +1,13 @@
 pub mod calc;
+
+/// Hardware smoke tests need a real Apple Silicon Mac (SMC, pmgr DVFS tables, IOReport CPU
+/// states). CI runners are VMs without them, so these tests are skipped when `CI` is set unless
+/// `LAZYTOP_HW_TESTS=1` forces them.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn hw_smoke() -> bool {
+    let forced = std::env::var("LAZYTOP_HW_TESTS").is_ok_and(|v| v == "1");
+    std::env::consts::ARCH == "aarch64" && (forced || std::env::var_os("CI").is_none())
+}
 #[cfg(target_os = "macos")]
 pub mod cf;
 #[cfg(target_os = "macos")]
@@ -101,7 +110,11 @@ mod platform {
                                 mem_total: None,
                             });
                         }
-                        if s.power.system_w.is_some() {
+                        let p = &s.power;
+                        if [p.cpu_w, p.gpu_w, p.ane_w, p.dram_w, p.system_w]
+                            .iter()
+                            .any(Option::is_some)
+                        {
                             pd.power = Some(s.power);
                         }
                         pd.bandwidth = s.bandwidth;
@@ -136,7 +149,7 @@ mod platform {
             let pd = p.sample();
             assert!(pd.chip.is_some());
             assert!(pd.mem.is_some());
-            if std::env::consts::ARCH == "aarch64" {
+            if crate::collector::macos::hw_smoke() {
                 assert_eq!(pd.cores_e.unwrap() + pd.cores_p.unwrap(), num_cores());
                 assert_eq!(pd.clusters.len(), 2, "{:?}", pd.clusters);
                 assert!(pd.gpu.is_some() && pd.power.is_some());
