@@ -42,6 +42,17 @@ pub struct Config {
     pub colors: BTreeMap<String, String>,
 }
 
+pub const THEME_NAMES: [&str; 8] = [
+    "dark",
+    "light",
+    "mono",
+    "catppuccin",
+    "catppuccin-mocha",
+    "catppuccin-macchiato",
+    "catppuccin-frappe",
+    "catppuccin-latte",
+];
+
 pub const PANEL_NAMES: [&str; 8] = [
     "ai_workload",
     "ai_runtime",
@@ -117,9 +128,10 @@ impl Config {
         if !(MIN_INTERVAL_MS..=MAX_INTERVAL_MS).contains(&self.interval_ms) {
             bail!("interval_ms must be between {MIN_INTERVAL_MS} and {MAX_INTERVAL_MS}");
         }
-        if !["dark", "light", "mono"].contains(&self.theme.as_str()) {
+        if !THEME_NAMES.contains(&self.theme.as_str()) {
             bail!(
-                "theme must be one of dark, light, mono (got {:?})",
+                "theme must be one of {} (got {:?})",
+                THEME_NAMES.join(", "),
                 self.theme
             );
         }
@@ -199,6 +211,7 @@ accent = "#5b8def"
     fn rejects_unknown_key_and_bad_values() {
         assert!(Config::parse("foo = 1").is_err());
         assert!(Config::parse("theme = \"neon\"").is_err());
+        assert!(Config::parse("theme = \"catppuccin-frappe\"").is_ok());
         assert!(Config::parse("interval_ms = 10").is_err());
         assert!(Config::parse("[panels]\nhidden=[\"nope\"]").is_err());
     }

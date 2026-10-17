@@ -26,7 +26,7 @@ struct Cli {
     /// Write diagnostics (missing sensors, IOReport channels) to this file
     #[arg(long)]
     log: Option<PathBuf>,
-    /// Theme: dark, light or mono
+    /// Theme: dark, light, mono, catppuccin (mocha), catppuccin-macchiato, catppuccin-frappe, catppuccin-latte
     #[arg(long)]
     theme: Option<String>,
     /// Render one frame as text (WIDTHxHEIGHT, e.g. 160x48) and exit
@@ -56,7 +56,11 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
         None => {
-            eprintln!("lazytop: unknown theme {:?} (dark, light, mono)", cfg.theme);
+            eprintln!(
+                "lazytop: unknown theme {:?} ({})",
+                cfg.theme,
+                config::THEME_NAMES.join(", ")
+            );
             return ExitCode::from(2);
         }
     };

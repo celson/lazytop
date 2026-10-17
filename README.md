@@ -41,6 +41,7 @@ lazytop                          # live
 lazytop --demo                   # synthetic data
 lazytop -i 500                   # refresh every 500 ms
 lazytop --theme light
+lazytop --theme catppuccin       # mocha; also catppuccin-macchiato, -frappe, -latte
 lazytop --log /tmp/lazytop.log   # diagnostics about unavailable sources
 ```
 
@@ -68,7 +69,8 @@ lazytop --log /tmp/lazytop.log   # diagnostics about unavailable sources
 
 ```toml
 interval_ms = 1000
-theme = "dark"          # dark | light | mono
+theme = "dark"          # dark | light | mono | catppuccin (= catppuccin-mocha)
+                        # | catppuccin-macchiato | catppuccin-frappe | catppuccin-latte
 
 [panels]
 hide_empty = true

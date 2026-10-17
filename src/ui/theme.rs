@@ -39,6 +39,97 @@ pub fn parse_hex(s: &str) -> Option<Color> {
     Some(Color::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
+/// The Catppuccin colors lazytop uses.
+struct Catppuccin {
+    base: &'static str,
+    text: &'static str,
+    overlay1: &'static str,
+    surface0: &'static str,
+    surface1: &'static str,
+    lavender: &'static str,
+    blue: &'static str,
+    teal: &'static str,
+    green: &'static str,
+    yellow: &'static str,
+    peach: &'static str,
+    red: &'static str,
+    mauve: &'static str,
+    pink: &'static str,
+    flamingo: &'static str,
+}
+
+const MOCHA: Catppuccin = Catppuccin {
+    base: "#1e1e2e",
+    text: "#cdd6f4",
+    overlay1: "#7f849c",
+    surface0: "#313244",
+    surface1: "#45475a",
+    lavender: "#b4befe",
+    blue: "#89b4fa",
+    teal: "#94e2d5",
+    green: "#a6e3a1",
+    yellow: "#f9e2af",
+    peach: "#fab387",
+    red: "#f38ba8",
+    mauve: "#cba6f7",
+    pink: "#f5c2e7",
+    flamingo: "#f2cdcd",
+};
+
+const MACCHIATO: Catppuccin = Catppuccin {
+    base: "#24273a",
+    text: "#cad3f5",
+    overlay1: "#8087a2",
+    surface0: "#363a4f",
+    surface1: "#494d64",
+    lavender: "#b7bdf8",
+    blue: "#8aadf4",
+    teal: "#8bd5ca",
+    green: "#a6da95",
+    yellow: "#eed49f",
+    peach: "#f5a97f",
+    red: "#ed8796",
+    mauve: "#c6a0f6",
+    pink: "#f5bde6",
+    flamingo: "#f0c6c6",
+};
+
+const FRAPPE: Catppuccin = Catppuccin {
+    base: "#303446",
+    text: "#c6d0f5",
+    overlay1: "#838ba7",
+    surface0: "#414559",
+    surface1: "#51576d",
+    lavender: "#babbf1",
+    blue: "#8caaee",
+    teal: "#81c8be",
+    green: "#a6d189",
+    yellow: "#e5c890",
+    peach: "#ef9f76",
+    red: "#e78284",
+    mauve: "#ca9ee6",
+    pink: "#f4b8e4",
+    flamingo: "#eebebe",
+};
+
+const LATTE: Catppuccin = Catppuccin {
+    base: "#eff1f5",
+    text: "#4c4f69",
+    overlay1: "#8c8fa1",
+    surface0: "#ccd0da",
+    surface1: "#bcc0cc",
+    lavender: "#7287fd",
+    blue: "#1e66f5",
+    teal: "#179299",
+    green: "#40a02b",
+    yellow: "#df8e1d",
+    peach: "#fe640b",
+    red: "#d20f39",
+    mauve: "#8839ef",
+    pink: "#ea76cb",
+    flamingo: "#dd7878",
+};
+
 fn rgb(hex: &str) -> Color {
     parse_hex(hex).expect("valid built-in color")
 }
@@ -129,11 +220,44 @@ impl Theme {
         }
     }
 
+    /// Builds a theme from a Catppuccin flavor palette (https://catppuccin.com/palette).
+    fn catppuccin(p: &Catppuccin) -> Self {
+        Self {
+            bg: rgb(p.base),
+            fg: rgb(p.text),
+            dim: rgb(p.overlay1),
+            border: rgb(p.surface1),
+            border_focus: rgb(p.lavender),
+            accent: rgb(p.blue),
+            e_core: rgb(p.yellow),
+            p_core: rgb(p.blue),
+            gpu: rgb(p.green),
+            ane: rgb(p.mauve),
+            media: rgb(p.peach),
+            mem_wired: rgb(p.mauve),
+            mem_active: rgb(p.pink),
+            mem_compressed: rgb(p.flamingo),
+            mem_free: rgb(p.surface1),
+            rx: rgb(p.teal),
+            tx: rgb(p.peach),
+            read: rgb(p.teal),
+            write: rgb(p.peach),
+            ok: rgb(p.green),
+            warn: rgb(p.yellow),
+            crit: rgb(p.red),
+            bar_bg: rgb(p.surface0),
+        }
+    }
+
     pub fn by_name(name: &str) -> Option<Theme> {
         match name {
             "dark" => Some(Self::dark()),
             "light" => Some(Self::light()),
             "mono" => Some(Self::mono()),
+            "catppuccin" | "catppuccin-mocha" => Some(Self::catppuccin(&MOCHA)),
+            "catppuccin-macchiato" => Some(Self::catppuccin(&MACCHIATO)),
+            "catppuccin-frappe" => Some(Self::catppuccin(&FRAPPE)),
+            "catppuccin-latte" => Some(Self::catppuccin(&LATTE)),
             _ => None,
         }
     }
@@ -195,5 +319,35 @@ mod tests {
         m.insert("nope".into(), "#000000".into());
         assert!(Theme::dark().with_overrides(&m).is_err());
         assert!(Theme::by_name("neon").is_none());
+    }
+
+    #[test]
+    fn catppuccin_flavors_use_official_palette() {
+        let rgb = |h: &str| parse_hex(h).unwrap();
+        let mocha = Theme::by_name("catppuccin-mocha").unwrap();
+        assert_eq!(
+            (mocha.bg, mocha.fg, mocha.accent),
+            (rgb("#1e1e2e"), rgb("#cdd6f4"), rgb("#89b4fa"))
+        );
+        assert_eq!(Theme::by_name("catppuccin"), Some(mocha));
+        let macchiato = Theme::by_name("catppuccin-macchiato").unwrap();
+        assert_eq!(
+            (macchiato.bg, macchiato.fg),
+            (rgb("#24273a"), rgb("#cad3f5"))
+        );
+        let frappe = Theme::by_name("catppuccin-frappe").unwrap();
+        assert_eq!((frappe.bg, frappe.fg), (rgb("#303446"), rgb("#c6d0f5")));
+        let latte = Theme::by_name("catppuccin-latte").unwrap();
+        assert_eq!(
+            (latte.bg, latte.fg, latte.crit),
+            (rgb("#eff1f5"), rgb("#4c4f69"), rgb("#d20f39"))
+        );
+    }
+
+    #[test]
+    fn every_config_theme_name_resolves() {
+        for name in crate::config::THEME_NAMES {
+            assert!(Theme::by_name(name).is_some(), "{name}");
+        }
     }
 }
