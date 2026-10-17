@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod common;
 pub mod demo;
+pub mod linux;
 pub mod rate;
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
