@@ -205,7 +205,7 @@ Header line: name, chip, core counts, system W, uptime. Then a grid of panels:
 ### Themes
 
 `dark` (default, mimics the screenshot palette), `light`, `mono`. Individual
-colors overridable in `[theme.colors]`.
+colors overridable in `[colors]`.
 
 ### Config file
 
@@ -222,7 +222,7 @@ sort = "cpu"
 reverse = false
 tree = false
 
-[theme.colors]
+[colors]
 # accent = "#5b8def"
 ```
 
